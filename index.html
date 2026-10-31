@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>11.1 나들이 지도</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap">
+</head>
+<body>
+<style>
+/* Layout: one-screen app — header strip, pan/zoom illustrated map, draggable bottom sheet timeline; area popups slide up from the bottom. */
+:root {
+  --bg: #e6f0f7;
+  --paper: #ffffff;
+  --land: #eef4e6;
+  --seoul: #fde9f0;
+  --incheon: #e9ebfb;
+  --water: #b9dcf3;
+  --water-ink: #4c8fbf;
+  --ink: #22303f;
+  --muted: #687789;
+  --hair: #d5dfe9;
+  --accent: #ff6f9c;
+  --accent-soft: #ffe1eb;
+  --sun: #ffc845;
+  --sun-soft: #fff3cf;
+  --road: #ffffff;
+  --block: #f3f6fa;
+  --shadow: 0 6px 22px rgba(40, 70, 110, .14);
+  --l1: #0052a4; --l2: #00a84d; --l6: #cd7c2f;
+  --park: #d3ecc3; --park-ink: #9fcb8a;
+  --font-display: "Jua", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-body: "Gowun Dodum", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121a25; --paper: #1b2533; --land: #18222e; --seoul: #2b2131; --incheon: #21243d;
+    --water: #1d3a57; --water-ink: #7fb6df; --ink: #e9eff6; --muted: #9aa9bb; --hair: #2c394a;
+    --accent: #ff8db1; --accent-soft: #3a2230; --sun: #ffd166; --sun-soft: #3a3220;
+    --road: #2a3646; --block: #222d3b; --park: #1f3427; --park-ink: #2f5039; --shadow: 0 6px 22px rgba(0, 0, 0, .45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121a25; --paper: #1b2533; --land: #18222e; --seoul: #2b2131; --incheon: #21243d;
+  --water: #1d3a57; --water-ink: #7fb6df; --ink: #e9eff6; --muted: #9aa9bb; --hair: #2c394a;
+  --accent: #ff8db1; --accent-soft: #3a2230; --sun: #ffd166; --sun-soft: #3a3220;
+  --road: #2a3646; --block: #222d3b; --park: #1f3427; --park-ink: #2f5039; --shadow: 0 6px 22px rgba(0, 0, 0, .45);
+  color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  overflow: hidden;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.app {
+  height: 100%; max-width: 480px; margin: 0 auto;
+  display: flex; flex-direction: column; position: relative;
+  background: var(--bg);
+}
+@media (min-width: 560px) {
+  .app { box-shadow: 0 0 0 1px var(--hair), var(--shadow); }
+}
+
+/* header */
+.top {
+  padding-block: 10px 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+}
+.top .date {
+  flex: none; width: 52px; height: 52px; border-radius: 16px;
+  background: var(--accent); color: #fff;
+  display: grid; place-items: center; text-align: center;
+  font-family: var(--font-display); line-height: 1;
+  transform: rotate(-4deg);
+}
+.top .date b { font-size: 22px; font-weight: 400; display: block; }
+.top .date small { font-size: 11px; opacity: .9; }
+.top h1 { font-family: var(--font-display); font-weight: 400; font-size: 21px; line-height: 1.15; margin: 0; text-wrap: balance; }
+.top .route { color: var(--muted); font-size: 13px; }
+.status {
+  flex: 1 1 100%;
+  font-size: 13px; line-height: 1.35; padding: 6px 12px; border-radius: 12px;
+  background: var(--sun-soft); color: var(--ink);
+}
+.status .live { display: inline-block; font-family: var(--font-display); color: var(--accent); margin-right: 6px; }
+
+/* map */
+.map-wrap { position: relative; flex: 1 1 auto; min-height: 120px; overflow: hidden; }
+#map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; cursor: grab; }
+#map.dragging { cursor: grabbing; }
+.chips {
+  position: absolute; top: 8px; left: max(12px, env(safe-area-inset-left, 0px)); right: 60px;
+  display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none;
+}
+.chip {
+  pointer-events: auto; border: 0; border-radius: 999px; padding: 5px 11px 5px 6px;
+  background: var(--paper); box-shadow: var(--shadow); font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.badge {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  color: #fff; font-family: var(--font-display); font-size: 12px; line-height: 1; flex: none;
+}
+.b1 { background: var(--l1); } .b2 { background: var(--l2); } .b6 { background: var(--l6); }
+.zoom {
+  position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); top: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.zoom button {
+  width: 38px; height: 38px; border: 0; border-radius: 12px; background: var(--paper);
+  box-shadow: var(--shadow); font-family: var(--font-display); font-size: 20px; line-height: 1;
+}
+
+/* svg map styles */
+.m-land { fill: var(--land); }
+.m-seoul { fill: var(--seoul); stroke: var(--paper); stroke-width: 3; }
+.m-incheon { fill: var(--incheon); stroke: var(--paper); stroke-width: 3; }
+.m-sea { fill: var(--water); }
+.m-river { fill: none; stroke: var(--water); stroke-width: 11; stroke-linecap: round; stroke-linejoin: round; }
+.m-region { font-family: var(--font-display); font-size: 26px; fill: var(--ink); opacity: .16; letter-spacing: 6px; }
+.m-water-label { font-family: var(--font-display); font-size: 13px; fill: var(--water-ink); letter-spacing: 3px; }
+.m-line-case { fill: none; stroke: var(--paper); stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; }
+.m-line { fill: none; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; opacity: .5; }
+.m-progress { fill: none; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+.m-st { fill: var(--paper); stroke-width: 2.5; }
+.m-st-label {
+  font-family: var(--font-body); font-size: 14px; fill: var(--ink); font-weight: 700;
+  paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round;
+}
+.pin { cursor: pointer; outline: none; }
+.pin:focus-visible .cap { stroke-width: 5; }
+.pin .cap { fill: var(--paper); stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 3px 4px rgba(40, 70, 110, .25)); }
+.pin .tail { fill: var(--accent); }
+.pin text { font-family: var(--font-display); font-size: 16px; fill: var(--ink); }
+.pin.now .cap { fill: var(--accent); }
+.pin.now text { fill: #fff; }
+.pin .ring { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0; }
+.pin.now .ring { animation: ring 1.8s ease-out infinite; }
+@keyframes ring { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.6); } }
+.pin .bob { animation: bob 2.6s ease-in-out infinite; transform-box: fill-box; }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.train-body { stroke: var(--paper); stroke-width: 2; }
+.bubble rect { fill: var(--ink); }
+.bubble path { fill: var(--ink); }
+.bubble text { fill: var(--paper); font-family: var(--font-display); font-size: 14px; }
+
+/* bottom sheet */
+.sheet {
+  flex: none; height: var(--sheet-h, 44%);
+  background: var(--paper); border-radius: 24px 24px 0 0;
+  box-shadow: 0 -6px 24px rgba(40, 70, 110, .12);
+  display: flex; flex-direction: column; position: relative; z-index: 2;
+  transition: height .28s cubic-bezier(.3, .8, .3, 1);
+}
+.sheet.dragging { transition: none; }
+.handle {
+  flex: none; border: 0; background: none; width: 100%;
+  padding-block: 10px 6px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: 6px; touch-action: none;
+}
+.handle .grip { width: 44px; height: 5px; border-radius: 3px; background: var(--hair); }
+.handle .hrow { width: 100%; display: flex; justify-content: space-between; align-items: baseline; }
+.handle h2 { font-family: var(--font-display); font-weight: 400; font-size: 18px; margin: 0; }
+.handle .hint { font-size: 12px; color: var(--muted); }
+.list {
+  flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain;
+  padding-block: 4px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 0;
+}
+.item {
+  display: grid; grid-template-columns: 50px 28px minmax(0, 1fr); align-items: start; column-gap: 8px;
+  width: 100%; border: 0; background: none; text-align: left; padding: 0;
+}
+.item .t { font-family: var(--font-display); font-size: 15px; padding-top: 9px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.item .rail { position: relative; align-self: stretch; display: flex; justify-content: center; }
+.item .rail::before { content: ""; position: absolute; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--hair); }
+.item:first-child .rail::before { top: 16px; }
+.item:last-child .rail::before { bottom: calc(100% - 16px); }
+.item .dot {
+  position: relative; margin-top: 6px; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--paper); border: 3px solid var(--hair); display: grid; place-items: center; font-size: 13px;
+}
+.item .card {
+  margin-block: 2px 8px; padding: 9px 12px; border-radius: 16px; background: var(--block);
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.item .card b { font-weight: 700; font-size: 15px; line-height: 1.35; }
+.item .card span { font-size: 13px; color: var(--muted); }
+.item .card .tags { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 3px; }
+.item .card .go { font-size: 12px; color: var(--accent); font-family: var(--font-display); margin-left: auto; }
+.item.trip .card { background: var(--sun-soft); }
+.item.done .card { opacity: .55; }
+.item.done .dot { border-color: var(--muted); }
+.item.now .dot { border-color: var(--accent); background: var(--accent); }
+.item.now .card { box-shadow: inset 0 0 0 2px var(--accent); }
+.item.now .t { color: var(--accent); }
+.note { font-size: 12px; color: var(--muted); padding: 6px 0 0 86px; }
+
+/* area popup */
+.overlay {
+  position: fixed; inset: 0; z-index: 20; background: rgba(18, 26, 37, .45);
+  display: flex; align-items: flex-end; justify-content: center;
+  animation: fade .2s ease;
+}
+@keyframes fade { from { opacity: 0; } }
+.pop {
+  width: 100%; max-width: 480px; max-height: 90%; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--paper); border-radius: 26px 26px 0 0;
+  padding-block: 14px calc(20px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  animation: up .32s cubic-bezier(.3, .9, .3, 1.05);
+}
+@keyframes up { from { transform: translateY(40px); opacity: .4; } }
+.pop-head { display: flex; align-items: center; gap: 10px; }
+.pop-head .em { font-size: 28px; }
+.pop-head h3 { font-family: var(--font-display); font-weight: 400; font-size: 22px; margin: 0; line-height: 1.2; }
+.pop-head small { color: var(--muted); font-size: 13px; }
+.pop-head .x { margin-left: auto; width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--block); font-size: 18px; flex: none; }
+.mini { margin-top: 12px; border-radius: 18px; overflow: hidden; background: var(--land); }
+.mini svg { display: block; width: 100%; height: auto; }
+.mini-cap { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.mm-road { fill: none; stroke: var(--road); stroke-width: 12; stroke-linecap: round; }
+.mm-water { fill: var(--water); }
+.mm-block { fill: var(--block); stroke: var(--hair); stroke-width: 1.5; }
+.mm-shrine { fill: var(--sun-soft); stroke: var(--sun); stroke-width: 2; }
+.mm-roof { fill: var(--sun); }
+.mm-stall { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
+.mm-under { fill: var(--incheon); stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.mm-rail { fill: none; stroke: var(--muted); stroke-width: 4; }
+.mm-ties { fill: none; stroke: var(--muted); stroke-width: 10; stroke-dasharray: 2 8; }
+.mm-route { fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 2 9; animation: march 1s linear infinite; }
+@keyframes march { to { stroke-dashoffset: -11; } }
+.mm-label { font-family: var(--font-body); font-weight: 700; font-size: 12px; fill: var(--ink); paint-order: stroke; stroke: var(--land); stroke-width: 4px; stroke-linejoin: round; }
+.mm-small { font-size: 10px; fill: var(--muted); font-weight: 400; }
+.mm-water-label { font-family: var(--font-display); font-size: 11px; fill: var(--water-ink); letter-spacing: 2px; }
+.mm-stop circle { fill: var(--accent); stroke: var(--paper); stroke-width: 2.5; }
+.mm-stop text { fill: #fff; font-family: var(--font-display); font-size: 12px; }
+.mm-st circle { stroke: var(--paper); stroke-width: 2.5; }
+.mm-st text { fill: #fff; font-family: var(--font-display); font-size: 11px; }
+.mm-q { fill: var(--sun); stroke: var(--paper); stroke-width: 2; }
+.mm-q-t { font-family: var(--font-display); font-size: 13px; fill: var(--ink); }
+.mm-bld { fill: var(--block); stroke: var(--hair); stroke-width: 1; }
+.mm-shop { fill: var(--accent-soft); stroke: var(--paper); stroke-width: 1; }
+.mm-apt { fill: var(--incheon); stroke: var(--paper); stroke-width: 1; }
+.mm-park { fill: var(--park); }
+.mm-tree { fill: var(--park-ink); }
+.mm-alley { fill: none; stroke: var(--road); stroke-width: 5; stroke-linecap: round; }
+.mm-zebra { fill: none; stroke: var(--hair); stroke-width: 6; stroke-dasharray: 2 2; }
+.mm-wall { fill: var(--sun-soft); stroke: var(--sun); stroke-width: 2.5; }
+.mm-pass { fill: none; stroke: var(--muted); stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; opacity: .22; }
+.mm-iline { fill: none; stroke: #7ca8d5; stroke-width: 3; stroke-dasharray: 6 5; }
+.mm-road-label { font-family: var(--font-body); font-size: 9px; fill: var(--muted); letter-spacing: 2px; text-anchor: middle; }
+.mm-area { font-family: var(--font-display); font-size: 15px; fill: var(--ink); opacity: .2; letter-spacing: 3px; }
+.mini { cursor: zoom-in; }
+.mini.big { overflow-x: auto; cursor: zoom-out; }
+.mini.big svg { width: 190%; max-width: none; }
+
+.steps { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+.steps .n {
+  width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff;
+  font-family: var(--font-display); display: grid; place-items: center; font-size: 14px; margin-top: 2px;
+}
+.steps .n.plain { background: var(--hair); color: var(--ink); }
+.steps .st-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.steps .st-time { font-family: var(--font-display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.steps b { font-size: 15px; }
+.steps p { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+.warn { font-size: 11px; background: var(--sun-soft); color: var(--ink); border-radius: 6px; padding: 1px 6px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 13px; border-radius: 14px;
+  background: var(--block); color: var(--ink); text-decoration: none; font-size: 14px; border: 0;
+}
+.btn.primary { background: var(--accent); color: #fff; font-family: var(--font-display); font-size: 15px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="app" id="app">
+  <header class="top">
+    <div class="date" aria-label="11월 1일 일요일"><span><b>1</b><small>11월 일</small></span></div>
+    <div style="min-width:0">
+      <h1>11월 첫날 나들이</h1>
+      <div class="route">잠실 → 동묘 → 부평</div>
+    </div>
+    <div class="status" id="status" aria-live="polite"></div>
+  </header>
+
+  <div class="map-wrap" id="mapWrap">
+    <svg id="map" role="img" aria-label="서울과 인천 일정 지도" xmlns="http://www.w3.org/2000/svg">
+      <g id="layer-base"></g>
+      <g id="layer-lines"></g>
+      <g id="layer-progress"></g>
+      <g id="layer-stations"></g>
+      <g id="layer-pins"></g>
+      <g id="layer-train"></g>
+    </svg>
+    <div class="chips">
+      <button class="chip" id="playT1" type="button"><span class="badge b2">2</span><span class="badge b6" style="margin-left:-10px">6</span>잠실 → 동묘앞</button>
+      <button class="chip" id="playT2" type="button"><span class="badge b1">1</span>동대문 → 부평</button>
+    </div>
+    <div class="zoom">
+      <button type="button" id="zin" aria-label="확대">+</button>
+      <button type="button" id="zout" aria-label="축소">−</button>
+      <button type="button" id="zfit" aria-label="전체 보기" style="font-size:16px">⤢</button>
+    </div>
+  </div>
+
+  <section class="sheet" id="sheet">
+    <button class="handle" id="handle" type="button" aria-label="일정표 펼치기/접기">
+      <span class="grip"></span>
+      <span class="hrow"><h2>오늘 일정</h2><span class="hint">카드를 누르면 지도에서 보여줘요</span></span>
+    </button>
+    <div class="list" id="list"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const NS = 'http://www.w3.org/2000/svg';
+  const LINES = { '1': { c: '#0052a4', name: '1호선' }, '2': { c: '#00a84d', name: '2호선' }, '6': { c: '#cd7c2f', name: '6호선' } };
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Stylised projection: west of Guro is squeezed and north–south is stretched so the whole trip fits a phone.
+  const P = (lat, lng) => [
+    lng < 126.88 ? (lng - 126.66) / 0.22 * 130 : 130 + (lng - 126.88) * 1400,
+    (37.6 - lat) * 2600
+  ];
+
+  const ST = {
+    '부평': [37.4895, 126.7245], '부천': [37.4842, 126.7830], '구로': [37.5030, 126.8819], '신도림': [37.5088, 126.8913],
+    '노량진': [37.5140, 126.9425], '용산': [37.5299, 126.9648], '서울역': [37.5547, 126.9707], '시청': [37.5657, 126.9772],
+    '종각': [37.5703, 126.9831], '종로3가': [37.5704, 126.9921], '종로5가': [37.5709, 127.0019], '동대문': [37.5714, 127.0098],
+    '동묘앞': [37.5733, 127.0165], '신당': [37.5657, 127.0179], '상왕십리': [37.5644, 127.0293], '왕십리': [37.5612, 127.0371],
+    '한양대': [37.5554, 127.0436], '뚝섬': [37.5471, 127.0474], '성수': [37.5446, 127.0560], '건대입구': [37.5404, 127.0700],
+    '구의': [37.5372, 127.0858], '강변': [37.5352, 127.0946], '잠실나루': [37.5207, 127.1037], '잠실': [37.5133, 127.1001]
+  };
+  const XY = {};
+  for (const k in ST) XY[k] = P(...ST[k]);
+
+  const TRIPS = {
+    t1: {
+      title: '잠실 → 신당 → 동묘앞', window: ['13:30', '14:05'],
+      segs: [
+        { line: '2', ids: ['잠실', '잠실나루', '강변', '구의', '건대입구', '성수', '뚝섬', '한양대', '왕십리', '상왕십리', '신당'] },
+        { line: '6', ids: ['신당', '동묘앞'] }
+      ],
+      start: '2호선 성수·왕십리 방면!', transfer: '신당역에서 6호선 환승!', end: '동묘앞 도착! 🎉'
+    },
+    t2: {
+      title: '동대문 → 부평', window: ['16:50', '18:10'],
+      segs: [{ line: '1', ids: ['동대문', '종로5가', '종로3가', '종각', '시청', '서울역', '용산', '노량진', '신도림', '구로', '부천', '부평'] }],
+      start: '인천행 열차 확인!', end: '부평 도착! 🍕'
+    }
+  };
+
+  const LABELS = {
+    '잠실': [12, 5, 'start'], '신당': [10, 14, 'start'], '동묘앞': [10, -2, 'start'], '동대문': [-10, -4, 'end'],
+    '서울역': [-10, 4, 'end'], '구로': [-10, 14, 'end'], '부평': [0, 24, 'middle'], '왕십리': [10, 4, 'start'], '노량진': [0, 22, 'middle']
+  };
+  const TRANSFER = new Set(['신당', '동대문', '서울역', '구로', '부평', '잠실', '왕십리', '동묘앞']);
+
+  const map = document.getElementById('map');
+  const el = (tag, attrs = {}, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const polyD = pts => 'M' + pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L');
+
+  // Closed Catmull-Rom → cubic Bézier, for soft region blobs.
+  function blob(pts) {
+    const n = pts.length; let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += ` C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d + 'Z';
+  }
+  function smoothOpen(pts) {
+    let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(i + 2, pts.length - 1)];
+      const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+      const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+      d += ` C${c1[0].toFixed(1)} ${c1[1].toFixed(1)} ${c2[0].toFixed(1)} ${c2[1].toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+    }
+    return d;
+  }
+
+  /* ---------- base map ---------- */
+  const base = document.getElementById('layer-base');
+  el('rect', { class: 'm-land', x: -400, y: -300, width: 1300, height: 1000 }, base);
+  const seoul = [[37.69, 126.97], [37.66, 127.09], [37.58, 127.12], [37.54, 127.18], [37.47, 127.14], [37.43, 127.05], [37.46, 126.95],
+    [37.47, 126.88], [37.49, 126.83], [37.55, 126.80], [37.59, 126.80], [37.64, 126.88]].map(a => P(...a));
+  el('path', { class: 'm-seoul', d: blob(seoul) }, base);
+  const incheon = [[37.60, 126.64], [37.57, 126.75], [37.50, 126.78], [37.44, 126.76], [37.41, 126.68], [37.45, 126.63], [37.53, 126.635]].map(a => P(...a));
+  el('path', { class: 'm-incheon', d: blob(incheon) }, base);
+  let sea = 'M-400 -300 H-26';
+  for (let y = -300; y < 700; y += 40) sea += ` q9 10 0 20 q-9 10 0 20`;
+  sea += ' V700 H-400 Z';
+  el('path', { class: 'm-sea', d: sea }, base);
+  const river = [[37.64, 126.66], [37.60, 126.78], [37.575, 126.83], [37.556, 126.87], [37.540, 126.90], [37.527, 126.93], [37.518, 126.96],
+    [37.515, 126.99], [37.525, 127.01], [37.530, 127.04], [37.533, 127.07], [37.527, 127.09], [37.540, 127.11], [37.552, 127.14], [37.56, 127.2]].map(a => P(...a));
+  el('path', { class: 'm-river', d: smoothOpen(river) }, base);
+  const lbl = (txt, xy, cls, extra = {}) => { const t = el('text', { x: xy[0], y: xy[1], class: cls, 'text-anchor': 'middle', ...extra }, base); t.textContent = txt; return t; };
+  lbl('서울', P(37.592, 126.93), 'm-region');
+  lbl('인천', P(37.545, 126.70), 'm-region');
+  lbl('한강', [178, 186], 'm-water-label', { transform: 'rotate(-28 178 186)' });
+  lbl('서해', [-60, 210], 'm-water-label');
+
+  /* ---------- subway lines ---------- */
+  const linesL = document.getElementById('layer-lines');
+  const progL = document.getElementById('layer-progress');
+  const stL = document.getElementById('layer-stations');
+  const segGeom = {}; // tripId -> [{line, pts, lens, total, progEl}]
+  for (const id in TRIPS) {
+    segGeom[id] = TRIPS[id].segs.map(s => {
+      const pts = s.ids.map(n => XY[n]);
+      const d = polyD(pts);
+      el('path', { class: 'm-line-case', d }, linesL);
+      el('path', { class: 'm-line', d, stroke: LINES[s.line].c }, linesL);
+      const lens = [0];
+      for (let i = 1; i < pts.length; i++) lens.push(lens[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      const total = lens[lens.length - 1];
+      const progEl = el('path', { class: 'm-progress', d, stroke: LINES[s.line].c, 'stroke-dasharray': total, 'stroke-dashoffset': total }, progL);
+      return { line: s.line, pts, lens, total, progEl };
+    });
+  }
+  const drawn = new Set();
+  for (const id in TRIPS) for (const s of TRIPS[id].segs) for (const n of s.ids) {
+    if (drawn.has(n)) continue; drawn.add(n);
+    const [x, y] = XY[n];
+    const big = TRANSFER.has(n);
+    el('circle', { class: 'm-st', cx: x, cy: y, r: big ? 5.5 : 3.6, stroke: LINES[s.line].c }, stL);
+    if (LABELS[n]) {
+      const [dx, dy, a] = LABELS[n];
+      const t = el('text', { class: 'm-st-label', x: x + dx, y: y + dy, 'text-anchor': a }, stL);
+      t.textContent = n;
+    }
+  }
+
+  /* ---------- mini-map drawing helpers ---------- */
+  const B = (x, y, w, h, cls = 'mm-bld', rx = 3) => `<rect class="${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}"/>`;
+  // A block of buildings; sizes wobble a little so it reads as a real street, not a spreadsheet.
+  const grid = (x, y, cols, rows, w, h, gx = 0, gy = 0, cls = 'mm-bld') => {
+    let s = '';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const k = (c * 7 + r * 5) % 4;
+      s += B(x + c * (w + gx), y + r * (h + gy) + (k === 3 ? 2 : 0), w - (k === 1 ? 3 : 0), h - (k === 2 ? 4 : k === 3 ? 2 : 0), cls);
+    }
+    return s;
+  };
+  const row = (x1, y1, x2, y2, n, cls = 'mm-stall', r = 3) => {
+    let s = '';
+    for (let i = 0; i < n; i++) { const k = n > 1 ? i / (n - 1) : 0; s += `<circle class="${cls}" cx="${(x1 + (x2 - x1) * k).toFixed(1)}" cy="${(y1 + (y2 - y1) * k).toFixed(1)}" r="${r}"/>`; }
+    return s;
+  };
+  const trees = pts => pts.map(([x, y]) => `<circle class="mm-tree" cx="${x}" cy="${y}" r="4"/>`).join('');
+  const T = (x, y, txt, cls = 'mm-label', anchor = 'middle') => `<text class="${cls}" x="${x}" y="${y}" text-anchor="${anchor}">${txt}</text>`;
+  const badge = (x, y, txt, color, r = 10) => `<g class="mm-st" transform="translate(${x} ${y})"><circle r="${r}" fill="${color}"/><text text-anchor="middle" dy="4"${txt.length > 1 ? ' font-size="8"' : ''}>${txt}</text></g>`;
+
+  /* ---------- area pins ---------- */
+  const AREAS = {
+    jamsil: {
+      emoji: '🎮', short: '잠실', name: '잠실 · 롯데월드몰', time: '11:40 – 13:30', at: XY['잠실'],
+      view: [400, 180, 90, 70],
+      mini: `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg">
+        <rect width="360" height="300" fill="var(--land)"/>
+        ${grid(8, 8, 4, 3, 24, 20, 8, 8, 'mm-apt')}
+        ${grid(174, 8, 6, 3, 21, 20, 8, 8, 'mm-apt')}
+        ${T(70, 48, '아파트 단지', 'mm-label mm-small')}${T(262, 48, '아파트 단지', 'mm-label mm-small')}
+
+        <path class="mm-water" d="M8 224 Q24 208 72 210 Q128 212 138 236 Q140 272 92 286 Q32 294 10 272 Z"/>
+        <circle class="mm-park" cx="62" cy="246" r="12"/>${trees([[58, 242], [68, 250]])}
+        ${T(62, 270, '매직아일랜드', 'mm-label mm-small')}
+        <path class="mm-water" d="M164 228 Q174 208 244 212 Q340 214 350 242 Q352 280 290 290 Q200 294 168 264 Z"/>
+        ${T(102, 228, '석촌호수 서호', 'mm-water-label')}${T(262, 282, '석촌호수 동호', 'mm-water-label')}
+        ${trees([[14, 212], [40, 204], [100, 204], [140, 220], [168, 212], [214, 204], [300, 206], [346, 226], [350, 268], [146, 270]])}
+
+        <path class="mm-alley" d="M0 204 H360 M80 106 V120 M300 106 V124"/>
+        <path class="mm-road" d="M0 106 H360"/><path class="mm-road" d="M150 0 V300"/>
+        <path class="mm-zebra" d="M142 92 H158 M142 120 H158 M136 98 V114 M164 98 V114"/>
+        ${T(330, 109, '올림픽로', 'mm-road-label')}
+        <text class="mm-road-label" x="153" y="40" transform="rotate(90 153 40)">송파대로</text>
+
+        ${B(8, 122, 40, 46)}${T(28, 180, '롯데호텔', 'mm-label mm-small')}
+        ${B(54, 122, 86, 32, 'mm-shop')}${T(97, 142, '롯데백화점', 'mm-label mm-small')}
+        ${B(54, 160, 86, 36, 'mm-bld', 10)}${T(97, 182, '롯데월드 어드벤처', 'mm-label mm-small')}
+
+        ${B(164, 122, 124, 66, 'mm-shop', 10)}${B(164, 122, 28, 66, 'mm-bld', 10)}
+        ${T(178, 200, '에비뉴엘', 'mm-label mm-small')}
+        ${T(240, 140, '롯데월드몰', 'mm-label')}
+        <circle class="mm-shrine" cx="316" cy="154" r="20"/><circle class="mm-roof" cx="316" cy="154" r="8"/>
+        ${T(316, 190, '롯데월드타워', 'mm-label mm-small')}
+
+        <path class="mm-pass" d="M150 106 V156 H200 M150 132 H120"/>
+        <path class="mm-route" d="M150 114 V156 H214"/>
+        <path class="mm-route" d="M214 156 Q246 178 270 172 T300 160"/>
+        ${badge(150, 106, '2', 'var(--l2)', 11)}${badge(168, 92, '8', '#e6186c', 8)}
+        ${T(110, 98, '잠실역', 'mm-label')}
+        ${T(214, 176, '팝업 (위치 확인)', 'mm-label mm-small')}
+      </svg>`,
+      cap: '대략적인 배치예요. 팝업스토어의 정확한 층과 위치는 공식 안내로 확인하세요. 지도를 누르면 크게 볼 수 있어요.',
+      steps: [
+        { t: '11:40', b: '잠실역에서 만나기', p: '2호선 잠실역에서 모여요. 8호선과 만나는 큰 역이라 출구와 개찰구가 많으니 만날 곳을 미리 정해 두세요.', xy: [128, 122] },
+        { t: '11:50', b: '지하 연결통로로 롯데월드몰', p: '개찰구를 나와 "롯데월드몰" 표지판을 따라가면 밖에 안 나가고 지하로 이어져요. 걸어서 5분쯤. 반대편은 롯데백화점과 롯데월드 쪽이에요.', xy: [170, 156] },
+        { t: '12:00', b: '2026 롤드컵 팝업스토어', p: '주말이라 대기 줄이 있을 수 있어요.', warn: '위치 확인 필요', xy: [214, 156] },
+        { t: '12:40', b: '롯데월드몰 구경 + 점심', p: '타워 쪽까지 둘러보고 석촌호수도 바로 옆이에요. 13:20쯤 잠실역으로 돌아가요.', xy: [272, 170] },
+        { t: '13:30', b: '2호선 타고 신당역으로', p: '"성수·왕십리 방면" 열차를 타요. 신당역에서 6호선 "동묘앞 방면"으로 갈아타고 한 정거장 가요.' }
+      ],
+      links: [['롯데월드몰', '롯데월드몰'], ['롤드컵 팝업', '롤드컵 팝업스토어 잠실']],
+      trip: 't1', tripLabel: '🚇 다음 이동 보기 (잠실 → 동묘앞)'
+    },
+    dongmyo: {
+      emoji: '🛍️', short: '동묘', name: '동묘 · 동대문', time: '14:05 – 16:50', at: [(XY['동묘앞'][0] + XY['동대문'][0]) / 2, (XY['동묘앞'][1] + XY['동대문'][1]) / 2],
+      view: [270, 40, 100, 70],
+      mini: `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg">
+        <rect width="360" height="300" fill="var(--land)"/>
+        <path class="mm-park" d="M0 0 H118 Q104 26 78 40 Q44 56 0 54 Z"/>
+        ${trees([[14, 12], [32, 22], [52, 10], [70, 24], [22, 38], [90, 12], [104, 6], [46, 34]])}
+        ${T(60, 30, '낙산 ↖', 'mm-label mm-small')}
+        <path class="mm-water" d="M0 240 q45 -6 90 0 t90 0 t90 0 t90 0 V256 q-45 6 -90 0 t-90 0 t-90 0 t-90 0 Z"/>
+        ${T(186, 252, '청계천', 'mm-water-label')}
+
+        <path class="mm-alley" d="M40 58 V176 M128 58 V176 M0 110 H226 M269 58 V176 M303 58 V176 M232 92 H352 M232 128 H352 M0 210 H360 M150 256 V300 M286 256 V300 M120 278 H360"/>
+        <path class="mm-road" d="M0 176 H360"/><path class="mm-road" d="M232 0 V300"/><path class="mm-road" d="M120 176 V300"/>
+        <path class="mm-zebra" d="M224 164 H240 M224 188 H240 M218 170 V182 M246 170 V182"/>
+        ${T(330, 179, '종 로', 'mm-road-label')}
+
+        ${T(18, 102, '창신동', 'mm-area', 'start')}
+        ${grid(48, 64, 4, 2, 15, 16, 4, 4)}
+        ${T(86, 60, '창신동 봉제골목', 'mm-label mm-small')}
+        ${grid(48, 118, 4, 2, 15, 20, 4, 6, 'mm-shop')}
+        ${T(86, 116, '문구·완구거리', 'mm-label')}
+        ${grid(134, 118, 2, 3, 13, 14, 4, 3)}
+        ${T(150, 116, '인쇄골목', 'mm-label mm-small')}
+
+        <rect class="mm-wall" x="176" y="64" width="50" height="86" rx="4"/>
+        ${B(186, 78, 30, 20, 'mm-shrine', 2)}<path class="mm-roof" d="M181 82 Q201 64 221 82 Z"/>
+        ${B(196, 140, 10, 10, 'mm-shrine', 1)}
+        ${trees([[184, 118], [218, 118], [184, 134], [218, 134]])}
+        ${T(201, 58, '동관왕묘 (보물)', 'mm-label')}
+        ${row(171, 70, 171, 150, 9)}${row(180, 158, 226, 158, 6)}
+
+        ${T(352, 74, '숭인동', 'mm-area', 'end')}
+        ${grid(240, 62, 3, 1, 24, 24, 10, 0)}
+        ${row(240, 92, 350, 92, 13)}${row(240, 128, 350, 128, 13)}${row(269, 96, 269, 124, 4)}${row(303, 96, 303, 124, 4)}
+        ${grid(240, 98, 3, 1, 24, 24, 10, 0, 'mm-shop')}
+        ${grid(240, 134, 3, 1, 24, 30, 10, 0, 'mm-shop')}
+        ${T(252, 114, '구제옷', 'mm-label mm-small')}${T(286, 114, 'LP', 'mm-label mm-small')}${T(320, 114, '골동품', 'mm-label mm-small')}
+        ${T(252, 153, '카메라', 'mm-label mm-small')}${T(286, 153, '구제옷', 'mm-label mm-small')}${T(320, 153, '잡화', 'mm-label mm-small')}
+        ${T(262, 58, '구제 노점 골목', 'mm-label mm-small')}
+        ${B(284, 6, 70, 40, 'mm-shop', 8)}${row(292, 26, 346, 26, 7, 'mm-stall', 2.5)}
+        ${T(319, 18, '서울풍물시장 ↗', 'mm-label mm-small')}
+        <text x="244" y="160" font-size="14">🍞</text><text x="190" y="172" font-size="14">🌶️</text>
+
+        <path class="mm-roof" d="M6 172 H22 L18 166 H10 Z"/>${B(8, 172, 12, 10, 'mm-shrine', 1)}
+        ${T(4, 162, '흥인지문', 'mm-label mm-small', 'start')}
+        ${grid(4, 214, 3, 1, 18, 18, 4, 0)}
+        ${B(76, 184, 40, 22)}${B(76, 214, 40, 20)}${T(96, 230, '동대문종합시장', 'mm-label mm-small')}
+        ${grid(128, 184, 4, 2, 20, 18, 5, 6)}
+        ${grid(240, 184, 4, 2, 24, 18, 6, 6)}
+
+        ${T(214, 296, '황학동', 'mm-area')}
+        ${grid(126, 260, 1, 1, 20, 14)}${grid(158, 260, 3, 1, 22, 14, 6, 0, 'mm-shop')}
+        ${grid(294, 260, 2, 1, 26, 14, 6, 0, 'mm-shop')}${grid(126, 284, 1, 1, 20, 14)}${grid(158, 284, 3, 1, 22, 12, 6, 0)}
+        ${T(196, 274, '벼룩시장 골목', 'mm-label mm-small')}${T(320, 296, '중고 주방·전자', 'mm-label mm-small')}
+
+        <path class="mm-route" d="M232 168 V158 H201 V100"/>
+        <path class="mm-route" d="M201 100 V158 H269 V128"/>
+        <path class="mm-route" d="M269 128 V92 H303 V50"/>
+        <path class="mm-route" d="M303 50 V110 H232 V110 H128 V140 H150"/>
+        <path class="mm-route" d="M150 140 H86"/>
+        <path class="mm-route" d="M86 140 V110 H40 V170 L56 176"/>
+        ${badge(232, 176, '1', 'var(--l1)')}${badge(250, 184, '6', 'var(--l6)', 8)}
+        ${T(232, 202, '동묘앞역', 'mm-label')}
+        ${badge(56, 176, '1', 'var(--l1)')}${badge(72, 184, '4', '#00a5de', 8)}
+        ${T(42, 200, '동대문역', 'mm-label')}
+      </svg>`,
+      cap: '대략적인 배치예요. 토스트·떡볶이 가게와 풍물시장 정확한 위치는 아래 버튼으로 지도앱에서 확인하세요. 지도를 누르면 크게 볼 수 있어요.',
+      steps: [
+        { t: '14:05', b: '동묘앞역 도착', p: '3번 출구로 나가면 바로 구제시장 거리예요.', xy: [214, 166] },
+        { t: '14:05', b: '동관왕묘(동묘) 구경', p: '관우를 모신 사당이에요. 담장을 따라 노점이 쭉 늘어서 있어요. 안은 조용해서 사진 찍기 좋아요. 개방 시간은 미리 확인하세요.', xy: [201, 110] },
+        { t: '14:20', b: '구제시장 노점 + 간식', p: '동묘 담장과 건너편 골목의 노점을 훑어보고 에브리데이 토스트, 복이네 떡볶이에서 간식 먹기. 현금 챙기고 흥정은 기본이에요.', xy: [269, 128] },
+        { t: '15:00', b: '서울풍물시장 · 황학동 벼룩시장', p: '풍물시장은 신설동 쪽으로 걸어서 10~15분이에요. 청계천 건너 황학동 골목에도 중고 물건 가게가 모여 있어요. LP, 필름카메라, 골동품, 옛날 장난감 구경하기.', xy: [303, 56] },
+        { t: '16:00', b: '동묘 인쇄골목', p: '오래된 인쇄소 골목이에요. 레트로 사진 찍기 좋아요.', xy: [150, 140] },
+        { t: '16:20', b: '창신동 문구·완구거리', p: '문구·장난감 도매상가예요. 말랑이 같은 소품 구경하기. 위쪽 언덕은 창신동 봉제골목이에요.', xy: [86, 140] },
+        { t: '16:50', b: '동대문역에서 1호선', p: '완구거리에서 걸어서 3~5분이에요. 바로 옆이 흥인지문이에요. 꼭 "인천행" 열차를 타세요!', xy: [40, 134] }
+      ],
+      links: [['에브리데이 토스트', '동묘 에브리데이토스트'], ['복이네 떡볶이', '동묘 복이네떡볶이'], ['서울풍물시장', '서울풍물시장'], ['문구완구시장', '동대문 문구완구시장']],
+      trip: 't2', tripLabel: '🚇 다음 이동 보기 (동대문 → 부평)'
+    },
+    bupyeong: {
+      emoji: '🍕', short: '부평', name: '부평 · 로니로티', time: '18:00 – 귀가', at: XY['부평'],
+      view: [0, 250, 80, 60],
+      mini: `<svg viewBox="0 0 360 300" xmlns="http://www.w3.org/2000/svg">
+        <rect width="360" height="300" fill="var(--land)"/>
+        ${grid(8, 6, 4, 1, 26, 30, 6, 0)}${grid(176, 6, 6, 1, 24, 30, 6, 0)}
+        <path class="mm-alley" d="M60 66 V188 M260 66 V188 M0 132 H96 M216 132 H360 M60 230 V300 M260 230 V300"/>
+        <path class="mm-road" d="M0 52 H360"/><path class="mm-road" d="M155 0 V186"/>
+        <path class="mm-zebra" d="M147 38 H163 M147 66 H163"/>
+        <text class="mm-road-label" x="158" y="96" transform="rotate(90 158 96)">부평대로</text>
+        <path class="mm-iline" d="M155 0 V300"/>
+
+        ${grid(8, 70, 2, 1, 22, 24, 6, 0, 'mm-shop')}${grid(70, 70, 1, 1, 22, 24, 6, 0, 'mm-shop')}
+        <path class="mm-park" d="M8 100 H92 V112 H8 Z"/>${trees([[16, 106], [34, 106], [52, 106], [70, 106], [86, 106]])}
+        ${grid(8, 116, 2, 1, 22, 12, 6, 0, 'mm-shop')}${grid(70, 140, 1, 2, 20, 18, 0, 6)}${grid(8, 140, 2, 2, 22, 18, 6, 6)}
+        ${T(46, 64, '문화의거리', 'mm-label mm-small')}
+
+        ${grid(222, 70, 4, 2, 26, 22, 8, 8, 'mm-shop')}
+        ${row(226, 98, 352, 98, 14)}
+        ${T(290, 64, '부평종합시장', 'mm-label mm-small')}
+        ${grid(222, 140, 4, 2, 26, 18, 8, 6)}
+
+        <rect class="mm-under" x="98" y="96" width="114" height="88" rx="12"/>
+        ${T(126, 122, '부평지하상가', 'mm-label')}
+        ${B(104, 160, 102, 22, 'mm-park', 8)}${T(130, 175, '북광장', 'mm-label mm-small')}
+
+        <path class="mm-ties" d="M0 206 H360"/><path class="mm-rail" d="M0 202 H360"/><path class="mm-rail" d="M0 210 H360"/>
+        ${B(108, 190, 94, 32, 'mm-bld', 6)}
+        ${T(10, 226, '경인선 (1호선)', 'mm-label mm-small', 'start')}
+        ${B(108, 232, 94, 20, 'mm-park', 8)}${T(155, 246, '남광장', 'mm-label mm-small')}
+        ${grid(8, 238, 2, 2, 22, 22, 6, 8)}${grid(70, 262, 1, 1, 22, 26)}${grid(222, 238, 4, 2, 26, 22, 8, 8)}
+
+        <path class="mm-route" d="M155 198 V172"/>
+        <path class="mm-route" d="M155 172 Q170 150 196 146 H260 V170 H286"/>
+        ${badge(140, 206, '1', 'var(--l1)', 11)}${badge(170, 206, '인1', '#7ca8d5', 10)}
+        ${T(155, 270, '부평역', 'mm-label')}
+        ${badge(155, 14, '인1', '#7ca8d5', 9)}${T(170, 18, '부평시장역', 'mm-label mm-small', 'start')}
+        ${T(296, 194, '로니로티 (대략)', 'mm-label mm-small')}
+      </svg>`,
+      cap: '대략적인 배치예요. 로니로티의 정확한 위치와 가까운 출구는 확인하지 못했어요. 도착하기 전에 지도앱으로 꼭 확인하세요. 지도를 누르면 크게 볼 수 있어요.',
+      steps: [
+        { t: '18:00', b: '부평역 도착', p: '예상 도착은 18:00 ~ 18:30이에요. 인천1호선과 만나는 큰 역이라 사람이 많아요.', xy: [155, 186] },
+        { t: '', b: '지하상가 · 출구 찾기', p: '역과 부평지하상가가 이어져 있어요. 지하상가가 넓어서 길을 잃기 쉬우니 로니로티 쪽 출구 번호를 지도앱에서 먼저 보고 움직이세요.', warn: '출구 확인', xy: [196, 146] },
+        { t: '', b: '로니로티 부평점 저녁', p: '역 주변에 문화의거리와 부평종합시장 같은 번화가가 있어요. 맛있게 먹고 하루 마무리!', warn: '위치 확인', xy: [286, 170] },
+        { t: '', b: '귀가 🏠', p: '조심히 들어가요.' }
+      ],
+      links: [['로니로티 부평점', '로니로티 부평']]
+    }
+  };
+
+  const pinL = document.getElementById('layer-pins');
+  const pinEls = {};
+  for (const id in AREAS) {
+    const a = AREAS[id];
+    const [x, y] = a.at;
+    const w = 74, h = 30, cy = y - 34;
+    const g = el('g', { class: 'pin', tabindex: 0, role: 'button', 'aria-label': `${a.name} 자세히 보기` }, pinL);
+    el('circle', { class: 'ring', cx: x, cy: y, r: 9, style: `transform-origin:${x}px ${y}px` }, g);
+    const bob = el('g', { class: 'bob' }, g);
+    el('path', { class: 'tail', d: `M${x - 7} ${cy + h / 2 - 2} L${x} ${y - 4} L${x + 7} ${cy + h / 2 - 2} Z` }, bob);
+    el('rect', { class: 'cap', x: x - w / 2, y: cy - h / 2, width: w, height: h, rx: h / 2 }, bob);
+    const t = el('text', { x, y: cy + 6, 'text-anchor': 'middle' }, bob);
+    t.textContent = `${a.emoji} ${a.short}`;
+    g.addEventListener('click', () => { if (!suppressClick) openArea(id); });
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openArea(id); } });
+    pinEls[id] = g;
+  }
+
+  /* ---------- view box: pan / zoom ---------- */
+  const wrap = document.getElementById('mapWrap');
+  const FULL = [-75, 0, 560, 330];
+  let vb = { x: FULL[0], y: FULL[1], w: FULL[2], h: FULL[3] };
+  let fitScale = 1;
+  const size = () => [wrap.clientWidth || 1, wrap.clientHeight || 1];
+  const scale = () => size()[0] / vb.w;
+  const apply = () => map.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  function boxFor(b) {
+    const [cw, ch] = size(); const a = cw / ch;
+    let w = b[2], h = b[3];
+    if (w / h > a) h = w / a; else w = h * a;
+    return { x: b[0] + b[2] / 2 - w / 2, y: b[1] + b[3] / 2 - h / 2, w, h };
+  }
+  let tween = null;
+  function goTo(target, ms = 520) {
+    cancelAnimationFrame(tween);
+    if (reduceMotion || ms === 0) { vb = target; apply(); return; }
+    const from = { ...vb }, t0 = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      vb = { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, w: from.w + (target.w - from.w) * e, h: from.h + (target.h - from.h) * e };
+      apply();
+      if (k < 1) tween = requestAnimationFrame(step);
+    };
+    tween = requestAnimationFrame(step);
+  }
+  function fit(ms) { const b = boxFor(FULL); fitScale = size()[0] / b.w; goTo(b, ms); }
+  function zoomAt(f, sx, sy) {
+    cancelAnimationFrame(tween);
+    const s = scale(), ns = Math.min(fitScale * 9, Math.max(fitScale * 0.8, s * f));
+    const wx = vb.x + sx / s, wy = vb.y + sy / s;
+    const [cw, ch] = size();
+    vb = { x: wx - sx / ns, y: wy - sy / ns, w: cw / ns, h: ch / ns };
+    apply();
+  }
+  new ResizeObserver(() => {
+    const [cw, ch] = size();
+    const fb = boxFor(FULL); fitScale = cw / fb.w;
+    const s = vb.w ? cw / vb.w : fitScale;
+    const cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2;
+    const ns = Math.max(s, fitScale * 0.8);
+    vb = { x: cx - cw / ns / 2, y: cy - ch / ns / 2, w: cw / ns, h: ch / ns };
+    apply();
+  }).observe(wrap);
+
+  const ptrs = new Map();
+  let suppressClick = false, moved = 0, last = null;
+  const local = e => { const r = map.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const pinchInfo = () => {
+    const [a, b] = [...ptrs.values()];
+    return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+  };
+  map.addEventListener('pointerdown', e => {
+    cancelAnimationFrame(tween);
+    ptrs.set(e.pointerId, local(e));
+    moved = 0;
+    last = ptrs.size === 2 ? pinchInfo() : null;
+    map.classList.add('dragging');
+  });
+  window.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId)) return;
+    const prev = ptrs.get(e.pointerId), cur = local(e);
+    ptrs.set(e.pointerId, cur);
+    if (ptrs.size === 1) {
+      const dx = cur[0] - prev[0], dy = cur[1] - prev[1];
+      moved += Math.abs(dx) + Math.abs(dy);
+      const s = scale();
+      vb.x -= dx / s; vb.y -= dy / s; apply();
+    } else if (ptrs.size === 2) {
+      const now = pinchInfo();
+      if (last) {
+        moved += 10;
+        const s = scale();
+        vb.x -= (now.m[0] - last.m[0]) / s; vb.y -= (now.m[1] - last.m[1]) / s;
+        zoomAt(now.d / last.d, now.m[0], now.m[1]);
+      }
+      last = now;
+    }
+  });
+  const up = e => {
+    if (!ptrs.has(e.pointerId)) return;
+    ptrs.delete(e.pointerId);
+    last = ptrs.size === 2 ? pinchInfo() : null;
+    if (!ptrs.size) {
+      map.classList.remove('dragging');
+      if (moved > 6) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+    }
+  };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+  map.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = local(e); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, x, y); }, { passive: false });
+  const center = () => { const [cw, ch] = size(); return [cw / 2, ch / 2]; };
+  document.getElementById('zin').onclick = () => zoomAt(1.4, ...center());
+  document.getElementById('zout').onclick = () => zoomAt(1 / 1.4, ...center());
+  document.getElementById('zfit').onclick = () => fit();
+
+  /* ---------- trains ---------- */
+  const trainL = document.getElementById('layer-train');
+  const train = el('g', { visibility: 'hidden' }, trainL);
+  const tBody = el('rect', { class: 'train-body', x: -15, y: -11, width: 30, height: 20, rx: 7 }, train);
+  el('rect', { x: -10, y: -7, width: 8, height: 6, rx: 2, fill: '#fff', opacity: .9 }, train);
+  el('rect', { x: 2, y: -7, width: 8, height: 6, rx: 2, fill: '#fff', opacity: .9 }, train);
+  el('circle', { cx: -6, cy: 4, r: 1.6, fill: '#fff' }, train);
+  el('circle', { cx: 6, cy: 4, r: 1.6, fill: '#fff' }, train);
+  el('path', { d: 'M-3 5 Q0 7.5 3 5', stroke: '#fff', 'stroke-width': 1.4, fill: 'none', 'stroke-linecap': 'round' }, train);
+  const bubble = el('g', { class: 'bubble', visibility: 'hidden' }, trainL);
+  const bRect = el('rect', { rx: 10, height: 26 }, bubble);
+  const bTail = el('path', {}, bubble);
+  const bText = el('text', { 'text-anchor': 'middle' }, bubble);
+
+  function pointOn(seg, dist) {
+    const L = seg.lens; dist = Math.max(0, Math.min(seg.total, dist));
+    let i = 1; while (i < L.length - 1 && L[i] < dist) i++;
+    const k = (dist - L[i - 1]) / ((L[i] - L[i - 1]) || 1);
+    const a = seg.pts[i - 1], b = seg.pts[i];
+    return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+  }
+  function placeTrain(xy, line) {
+    train.setAttribute('transform', `translate(${xy[0].toFixed(1)} ${xy[1].toFixed(1)})`);
+    tBody.setAttribute('fill', LINES[line].c);
+    train.setAttribute('visibility', 'visible');
+  }
+  function say(text, xy) {
+    if (!text) { bubble.setAttribute('visibility', 'hidden'); return; }
+    bText.textContent = text;
+    const w = Math.max(70, text.length * 13 + 18);
+    const x = xy[0], y = xy[1] - 22;
+    bRect.setAttribute('x', x - w / 2); bRect.setAttribute('y', y - 26); bRect.setAttribute('width', w);
+    bTail.setAttribute('d', `M${x - 6} ${y - 1} L${x} ${y + 6} L${x + 6} ${y - 1} Z`);
+    bText.setAttribute('x', x); bText.setAttribute('y', y - 8);
+    bubble.setAttribute('visibility', 'visible');
+  }
+  function resetProgress() { for (const id in segGeom) for (const s of segGeom[id]) s.progEl.setAttribute('stroke-dashoffset', s.total); }
+  function setProgress(id, frac) {
+    const segs = segGeom[id];
+    const total = segs.reduce((n, s) => n + s.total, 0);
+    let left = frac * total, at = null, line = segs[0].line;
+    for (const s of segs) {
+      const here = Math.max(0, Math.min(s.total, left));
+      s.progEl.setAttribute('stroke-dashoffset', s.total - here);
+      if (left >= 0 && (at === null || left <= s.total)) { at = pointOn(s, here); line = s.line; }
+      left -= s.total;
+    }
+    return { at, line };
+  }
+
+  let anim = null;
+  function tripBox(id) {
+    const pts = segGeom[id].flatMap(s => s.pts);
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    const pad = 40, minSide = 240;
+    let x = Math.min(...xs) - pad, y = Math.min(...ys) - pad - 20;
+    let w = Math.max(...xs) - Math.min(...xs) + pad * 2, h = Math.max(...ys) - Math.min(...ys) + pad * 2 + 20;
+    if (w < minSide) { x -= (minSide - w) / 2; w = minSide; }
+    if (h < minSide) { y -= (minSide - h) / 2; h = minSide; }
+    return [x, y, w, h];
+  }
+  function playTrip(id) {
+    cancelAnimationFrame(anim);
+    closeArea();
+    setSheet('peek');
+    resetProgress();
+    goTo(boxFor(tripBox(id)));
+    const trip = TRIPS[id], segs = segGeom[id];
+    const phases = [];
+    if (trip.start) phases.push({ pause: 1300, seg: 0, d: 0, msg: trip.start });
+    segs.forEach((s, i) => {
+      phases.push({ seg: i, move: s.total / 75 * 1000 });
+      if (i < segs.length - 1) phases.push({ pause: 1400, seg: i + 1, d: 0, msg: trip.transfer });
+    });
+    phases.push({ pause: 2600, seg: segs.length - 1, d: segs[segs.length - 1].total, msg: trip.end });
+    if (reduceMotion) {
+      const r = setProgress(id, 1); placeTrain(r.at, r.line); say(trip.end, r.at); return;
+    }
+    let pi = 0, t0 = performance.now() + 450;
+    const step = now => {
+      const ph = phases[pi];
+      const el_ = Math.max(0, now - t0);
+      const before = segs.slice(0, ph.seg).reduce((n, s) => n + s.total, 0);
+      const total = segs.reduce((n, s) => n + s.total, 0);
+      let d;
+      if (ph.move) d = Math.min(1, el_ / ph.move) * segs[ph.seg].total;
+      else d = ph.d;
+      const r = setProgress(id, (before + d) / total);
+      placeTrain(r.at, segs[ph.seg].line);
+      say(ph.msg || '', r.at);
+      const dur = ph.move || ph.pause;
+      if (el_ >= dur) {
+        pi++; t0 = now;
+        if (pi >= phases.length) { say(''); setTimeout(updateLive, 50); return; }
+      }
+      anim = requestAnimationFrame(step);
+    };
+    anim = requestAnimationFrame(step);
+  }
+  document.getElementById('playT1').onclick = () => playTrip('t1');
+  document.getElementById('playT2').onclick = () => playTrip('t2');
+
+  /* ---------- schedule ---------- */
+  const PLAN = [
+    { s: '11:40', e: '12:00', em: '🎮', b: '잠실역 만남 → 롤드컵 팝업스토어', p: '지하 연결통로로 롯데월드몰까지', area: 'jamsil' },
+    { s: '12:00', e: '13:30', em: '🛍️', b: '롯데월드몰 구경', p: '팝업 보고 몰 한 바퀴 + 점심', area: 'jamsil' },
+    { s: '13:30', e: '14:05', em: '🚇', b: '잠실 → 신당 → 동묘앞', p: '약 35분 · 신당역에서 환승', trip: 't1', lines: ['2', '6'] },
+    { s: '14:05', e: '14:20', em: '🏮', b: '동묘앞역 도착 · 동관왕묘', p: '3번 출구로 나가면 바로 시장', area: 'dongmyo' },
+    { s: '14:20', e: '15:00', em: '🍞', b: '구제시장 노점 + 토스트·떡볶이', p: '현금 챙기기, 흥정은 기본', area: 'dongmyo' },
+    { s: '15:00', e: '16:00', em: '📻', b: '황학동 벼룩시장 · 서울풍물시장', p: 'LP · 필름카메라 · 골동품', area: 'dongmyo' },
+    { s: '16:00', e: '16:50', em: '🧸', b: '인쇄골목 · 창신동 문구·완구거리', p: '마지막에 동대문역으로', area: 'dongmyo' },
+    { s: '16:50', e: '18:10', em: '🚇', b: '동대문 → 부평', p: '인천행 열차 확인! 약 70분', trip: 't2', lines: ['1'] },
+    { s: '18:10', e: '20:00', em: '🍕', b: '로니로티 부평점 저녁', p: '도착 예상 18:00 ~ 18:30', area: 'bupyeong' },
+    { s: '20:00', e: '23:59', em: '🏠', b: '귀가', p: '오늘도 수고했어요', area: 'bupyeong' }
+  ];
+  const mins = hm => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+  const list = document.getElementById('list');
+  const itemEls = PLAN.map(it => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'item' + (it.trip ? ' trip' : '');
+    const tags = it.lines ? it.lines.map(l => `<span class="badge b${l}">${l}</span>`).join('') : '';
+    btn.innerHTML = `<span class="t">${it.s}</span><span class="rail"><span class="dot">${it.em}</span></span>
+      <span class="card"><b>${it.b}</b><span>${it.p}</span>
+      <span class="tags">${tags}<span class="go">${it.trip ? '▶ 열차 이동 보기' : '지도 보기 ›'}</span></span></span>`;
+    btn.onclick = () => it.trip ? playTrip(it.trip) : openArea(it.area);
+    list.appendChild(btn);
+    return btn;
+  });
+  const note = document.createElement('div');
+  note.className = 'note';
+  note.textContent = '지도는 보기 쉽게 비율을 바꿔 그렸어요. 열차 위치는 실제 운행 정보가 아니라 일정 기준 추정이에요.';
+  list.appendChild(note);
+
+  /* ---------- live mode (KST, 2026-11-01) ---------- */
+  const status = document.getElementById('status');
+  function kst() {
+    const d = new Date(Date.now() + 9 * 3600e3);
+    return { date: d.toISOString().slice(0, 10), m: d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60 };
+  }
+  function updateLive() {
+    const { date, m } = kst();
+    const DAY = '2026-11-01';
+    let nowIdx = -1;
+    Object.values(pinEls).forEach(p => p.classList.remove('now'));
+    if (date === DAY) {
+      PLAN.forEach((it, i) => { if (m >= mins(it.s) && m < mins(it.e)) nowIdx = i; });
+      itemEls.forEach((b, i) => {
+        b.classList.toggle('done', m >= mins(PLAN[i].e));
+        b.classList.toggle('now', i === nowIdx);
+      });
+    } else {
+      itemEls.forEach(b => b.classList.remove('done', 'now'));
+    }
+    const playing = anim && train.getAttribute('visibility') === 'visible' && bubble.getAttribute('visibility') === 'visible';
+    const cur = nowIdx >= 0 ? PLAN[nowIdx] : null;
+    if (cur && cur.trip) {
+      const [a, b] = TRIPS[cur.trip].window.map(mins);
+      const r = setProgress(cur.trip, Math.min(1, (m - a) / (b - a)));
+      if (!playing) { placeTrain(r.at, r.line); say(''); }
+      status.innerHTML = `<span class="live">● 지금</span>${cur.b} · 열차가 지도 위에 있어요`;
+    } else {
+      if (cur && cur.area) pinEls[cur.area].classList.add('now');
+      if (date === DAY) {
+        if (m < mins(PLAN[0].s)) status.innerHTML = `오늘이에요! · 11:40 잠실역에서 만나요`;
+        else if (cur) status.innerHTML = `<span class="live">● 지금</span>${cur.b}`;
+        else status.innerHTML = '오늘 일정 끝! 🏠';
+      } else if (date < DAY) {
+        const dd = Math.round((Date.parse(DAY) - Date.parse(date)) / 864e5);
+        status.innerHTML = `<span class="live">D-${dd}</span> · 11:40 잠실역`;
+      } else {
+        status.innerHTML = '즐거웠던 나들이 📸';
+      }
+    }
+    return nowIdx;
+  }
+
+  /* ---------- area popup ---------- */
+  let overlay = null, lastFocus = null;
+  const naver = qy => 'https://map.naver.com/p/search/' + encodeURIComponent(qy);
+  function openArea(id) {
+    closeArea();
+    const a = AREAS[id];
+    goTo(boxFor(a.view));
+    lastFocus = document.activeElement;
+    overlay = document.createElement('div');
+    overlay.className = 'overlay';
+    const stops = a.steps.map((s, i) => s.xy ? `<g class="mm-stop" transform="translate(${s.xy[0]} ${s.xy[1]})"><circle r="10"/><text text-anchor="middle" dy="4">${i + 1}</text></g>` : '').join('');
+    const mini = a.mini.replace('</svg>', stops + '</svg>');
+    overlay.innerHTML = `<div class="pop" role="dialog" aria-modal="true" aria-labelledby="popTitle" tabindex="-1">
+      <div class="pop-head"><span class="em">${a.emoji}</span><div><h3 id="popTitle">${a.name}</h3><small>${a.time}</small></div>
+        <button class="x" type="button" aria-label="닫기">✕</button></div>
+      <div class="mini">${mini}</div>
+      <div class="mini-cap">${a.cap}</div>
+      <ol class="steps">${a.steps.map((s, i) => `<li><span class="n${s.xy ? '' : ' plain'}">${i + 1}</span><div>
+        <div class="st-head">${s.t ? `<span class="st-time">${s.t}</span>` : ''}<b>${s.b}</b>${s.warn ? `<span class="warn">${s.warn}</span>` : ''}</div>
+        <p>${s.p}</p></div></li>`).join('')}</ol>
+      <div class="btns">${a.trip ? `<button class="btn primary" type="button" data-trip="${a.trip}">${a.tripLabel}</button>` : ''}
+        ${a.links.map(([t, qy]) => `<a class="btn" href="${naver(qy)}" target="_blank" rel="noopener">📍 ${t}</a>`).join('')}</div>
+    </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeArea(); });
+    overlay.querySelector('.x').onclick = closeArea;
+    const miniBox = overlay.querySelector('.mini');
+    miniBox.addEventListener('click', () => { if (!miniBox.dataset.dragged) miniBox.classList.toggle('big'); });
+    miniBox.addEventListener('scroll', () => { miniBox.dataset.dragged = '1'; clearTimeout(miniBox._t); miniBox._t = setTimeout(() => { delete miniBox.dataset.dragged; }, 150); });
+    const tb = overlay.querySelector('[data-trip]');
+    if (tb) tb.onclick = () => playTrip(tb.dataset.trip);
+    document.body.appendChild(overlay);
+    overlay.querySelector('.pop').focus();
+  }
+  function closeArea() {
+    if (!overlay) return;
+    overlay.remove(); overlay = null;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeArea(); });
+
+  /* ---------- bottom sheet ---------- */
+  const sheet = document.getElementById('sheet'), handle = document.getElementById('handle'), app = document.getElementById('app');
+  const SNAP = { peek: 74, half: 0.44, full: 0.74 };
+  let sheetState = 'half';
+  function setSheet(st) {
+    sheetState = st;
+    const v = SNAP[st];
+    sheet.style.setProperty('--sheet-h', typeof v === 'number' && v > 1 ? v + 'px' : v * 100 + '%');
+  }
+  let drag = null;
+  handle.addEventListener('pointerdown', e => { drag = { y: e.clientY, h: sheet.getBoundingClientRect().height, moved: 0 }; sheet.classList.add('dragging'); handle.setPointerCapture(e.pointerId); });
+  handle.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dy = drag.y - e.clientY; drag.moved = Math.max(drag.moved, Math.abs(dy));
+    const H = app.clientHeight;
+    const h = Math.max(SNAP.peek, Math.min(H * 0.86, drag.h + dy));
+    sheet.style.setProperty('--sheet-h', h + 'px');
+  });
+  handle.addEventListener('pointerup', () => {
+    if (!drag) return;
+    sheet.classList.remove('dragging');
+    if (drag.moved < 6) { setSheet(sheetState === 'half' ? 'full' : sheetState === 'full' ? 'peek' : 'half'); drag = null; return; }
+    const H = app.clientHeight, h = sheet.getBoundingClientRect().height;
+    const opts = [['peek', SNAP.peek], ['half', H * SNAP.half], ['full', H * SNAP.full]];
+    opts.sort((a, b) => Math.abs(a[1] - h) - Math.abs(b[1] - h));
+    setSheet(opts[0][0]);
+    drag = null;
+  });
+
+  /* ---------- boot ---------- */
+  setSheet('half');
+  requestAnimationFrame(() => {
+    fit(0);
+    const idx = updateLive();
+    if (idx >= 0) itemEls[idx].scrollIntoView({ block: 'center' });
+  });
+  setInterval(() => { if (!document.hidden) updateLive(); }, 20000);
+})();
+</script>
+
+</body>
+</html>
